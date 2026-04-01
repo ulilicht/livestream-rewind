@@ -2,201 +2,452 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Stream Player</title>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #111; display: flex; flex-direction: column;
-           align-items: center; justify-content: center;
-           min-height: 100vh; font-family: sans-serif; color: white; }
+    :root {
+      --bg: #000;
+      --surface: rgba(28, 28, 30, 0.94);
+      --surface2: rgba(44, 44, 46, 0.88);
+      --accent-live: #30d158;
+      --text: #ffffff;
+      --text-dim: rgba(255,255,255,0.5);
+      --font: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+    }
 
-    #wrapper { position: relative; width: 100%; max-width: 1280px; }
-    video { width: 100%; display: block; background: #000; }
+    *, *::before, *::after {
+      box-sizing: border-box; margin: 0; padding: 0;
+      -webkit-user-select: none; user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+    }
 
-    /* Play-Button Overlay */
-    #playOverlay {
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      font-family: var(--font);
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    #app {
+      display: flex; flex-direction: column;
+      height: 100dvh;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* ── Video ── */
+    #video-wrap {
+      flex: 1; position: relative;
+      background: #000; overflow: hidden;
+    }
+
+    video {
+      width: 100%; height: 100%;
+      object-fit: contain; display: block;
+    }
+
+    /* ── Start overlay ── */
+    #play-overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      cursor: pointer;
+      transition: opacity 0.3s ease;
+    }
+    #play-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .start-circle {
+      width: 80px; height: 80px;
+      background: rgba(255,255,255,0.15); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid rgba(255,255,255,0.2);
+      transition: transform 0.15s, background 0.15s;
+    }
+    #play-overlay:active .start-circle { transform: scale(0.93); background: rgba(255,255,255,0.25); }
+    .start-circle svg { width: 32px; height: 32px; fill: white; margin-left: 4px; }
+    .start-label { font-size: 15px; font-weight: 500; color: rgba(255,255,255,0.75); }
+
+    /* ── Spinner ── */
+    #loading {
       position: absolute; inset: 0;
       display: flex; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.5); cursor: pointer; font-size: 72px;
+      background: rgba(0,0,0,0.55); transition: opacity 0.25s;
     }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(255,255,255,0.15); border-top-color: white;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Controls */
-    #controls {
-      width: 100%; max-width: 1280px;
-      padding: 12px 16px; background: #1e1e1e;
-    }
-
-    /* Seekbar */
-    #seekbar-track {
-      position: relative; height: 8px; background: #444;
-      border-radius: 4px; cursor: pointer; margin-bottom: 8px;
-    }
-    #seekbar-fill {
-      height: 100%; background: #e00; border-radius: 4px;
-      pointer-events: none;
-    }
-    #seekbar-thumb {
-      position: absolute; top: 50%; width: 18px; height: 18px;
-      background: white; border-radius: 50%;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
-    }
-
-    /* Labels */
-    #time-labels {
-      display: flex; justify-content: space-between;
-      font-size: 12px; opacity: 0.6; margin-bottom: 8px;
-    }
-
-    /* Buttons */
-    #btn-row {
+    /* ── Video corner: Fullscreen + PiP ── */
+    #video-corner {
+      position: absolute; bottom: 14px; right: 14px;
       display: flex; gap: 8px; align-items: center;
     }
-    button {
-      background: #333; border: none; color: white;
-      padding: 6px 14px; border-radius: 6px;
-      font-size: 14px; cursor: pointer;
+    .corner-btn {
+      width: 38px; height: 38px;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 0.5px solid rgba(255,255,255,0.18);
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: transform 0.12s ease, background 0.12s ease;
     }
-    button:active { background: #555; }
-    #status { font-size: 12px; opacity: 0.5; margin-left: auto; }
+    .corner-btn:active { transform: scale(0.86); background: rgba(0,0,0,0.7); }
+    .corner-btn svg { width: 18px; height: 18px; fill: white; }
+    .corner-btn.hidden { display: none; }
+
+    /* ── Controls panel ── */
+    #controls {
+      flex-shrink: 0;
+      padding: 14px 20px 18px;
+      background: var(--surface);
+      backdrop-filter: blur(40px) saturate(180%);
+      -webkit-backdrop-filter: blur(40px) saturate(180%);
+      border-top: 0.5px solid rgba(255,255,255,0.1);
+    }
+
+    #top-row {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px;
+    }
+
+    #time-current {
+      font-size: 13px; font-weight: 500; color: var(--text-dim);
+      font-variant-numeric: tabular-nums; letter-spacing: -0.1px;
+    }
+
+    #live-badge {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.2px;
+      color: var(--text-dim); transition: color 0.3s;
+    }
+    #live-badge.is-live { color: var(--accent-live); }
+    #live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: currentColor; opacity: 0.4; transition: opacity 0.3s;
+    }
+    #live-badge.is-live #live-dot {
+      opacity: 1; animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.35); opacity: 0.55; }
+    }
+
+    /* ── Seekbar ── */
+    #seekbar-wrap {
+      position: relative; height: 28px;
+      display: flex; align-items: center;
+      margin-bottom: 4px; cursor: pointer; touch-action: none;
+    }
+    #seekbar-track {
+      position: relative; width: 100%; height: 4px;
+      background: rgba(255,255,255,0.15); border-radius: 2px;
+      overflow: hidden; transition: height 0.12s ease;
+    }
+    #seekbar-wrap.dragging #seekbar-track { height: 6px; }
+    #seekbar-fill {
+      position: absolute; left: 0; top: 0; height: 100%;
+      background: white; border-radius: 2px; pointer-events: none;
+    }
+    #seekbar-thumb {
+      position: absolute; top: 50%;
+      width: 18px; height: 18px;
+      background: white; border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      pointer-events: none; transition: transform 0.12s ease;
+    }
+    #seekbar-wrap.dragging #seekbar-thumb { transform: translate(-50%, -50%) scale(1.3); }
+
+    #labels-row {
+      display: flex; justify-content: space-between;
+      font-size: 11px; color: var(--text-dim);
+      font-variant-numeric: tabular-nums; margin-bottom: 16px;
+    }
+
+    /* ── Buttons — all uniform ── */
+    #btn-row {
+      display: flex; justify-content: center; align-items: stretch; gap: 8px;
+    }
+
+    .btn {
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 4px;
+      background: var(--surface2); border: none; border-radius: 10px;
+      color: var(--text); font-family: var(--font);
+      padding: 10px 4px; cursor: pointer;
+      transition: transform 0.1s ease, background 0.1s ease;
+    }
+    .btn:active { transform: scale(0.92); background: rgba(60,60,62,0.95); }
+
+    .btn svg { width: 22px; height: 22px; fill: currentColor; display: block; }
+
+    .btn-label {
+      font-size: 10px; font-weight: 500;
+      color: var(--text-dim); letter-spacing: 0.1px; line-height: 1;
+    }
+
+    .btn-live {
+      background: rgba(48,209,88,0.14);
+      border: 0.5px solid rgba(48,209,88,0.28);
+      color: var(--accent-live);
+    }
+    .btn-live .btn-label { color: var(--accent-live); opacity: 0.75; }
+    .btn-live:active { background: rgba(48,209,88,0.24); }
   </style>
 </head>
 <body>
+<div id="app">
 
-<div id="wrapper">
-  <video id="video" playsinline></video>
-  <div id="playOverlay">▶</div>
-</div>
+  <div id="video-wrap">
+    <video id="video" playsinline></video>
+    <div id="loading"><div class="spinner"></div></div>
 
-<div id="controls">
-  <div id="seekbar-track">
-    <div id="seekbar-fill"></div>
-    <div id="seekbar-thumb"></div>
+    <div id="play-overlay">
+      <div class="start-circle">
+        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </div>
+      <span class="start-label">Tippen zum Starten</span>
+    </div>
+
+    <!-- Fullscreen + PiP — standard bottom-right position -->
+    <div id="video-corner">
+      <button class="corner-btn hidden" id="pip-btn" onclick="togglePip()">
+        <svg viewBox="0 0 24 24"><path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 1.99 2 1.99h18c1.1 0 2-.89 2-1.99V5c0-1.1-.9-2-2-2zm0 16.01H3V4.99h18v14.02z"/><rect x="11" y="9" width="8" height="5" rx="1"/></svg>
+      </button>
+      <button class="corner-btn" id="fs-btn" onclick="toggleFullscreen()">
+        <svg id="fs-enter" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        <svg id="fs-exit"  viewBox="0 0 24 24" style="display:none"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
+      </button>
+    </div>
   </div>
-  <div id="time-labels">
-    <span id="label-start">–2:00h</span>
-    <span id="label-now">LIVE</span>
-  </div>
-  <div id="btn-row">
-    <button onclick="skip(-30)">⏪ 30s</button>
-    <button onclick="skip(-10)">⏪ 10s</button>
-    <button onclick="goLive()">🔴 LIVE</button>
-    <button onclick="skip(10)">10s ⏩</button>
-    <button onclick="skip(30)">30s ⏩</button>
-    <span id="status">Lade...</span>
+
+  <div id="controls">
+    <div id="top-row">
+      <span id="time-current">–:––</span>
+      <div id="live-badge"><div id="live-dot"></div><span>LIVE</span></div>
+    </div>
+
+    <div id="seekbar-wrap">
+      <div id="seekbar-track"><div id="seekbar-fill"></div></div>
+      <div id="seekbar-thumb"></div>
+    </div>
+
+    <div id="labels-row">
+      <span id="label-start">–2:00</span>
+      <span>jetzt</span>
+    </div>
+
+    <div id="btn-row">
+
+      <!-- ↺ 5 min -->
+      <button class="btn" onclick="skip(-300)">
+        <svg viewBox="0 0 24 24"><path d="M12.5 5C8.36 5 4.86 7.43 3.28 10.93L1 8.5V15h6.5l-2.55-2.55C6.12 9.72 9.06 8 12.5 8c3.04 0 5.64 1.72 7.05 4.26l2.27-1.34C19.8 7.42 16.45 5 12.5 5zm-.5 12v-1.87c-1.8-.38-3-1.22-3-2.63 0-1.5 1.5-2.46 3-2.46s3 .96 3 2.46h1.5c0-2.22-1.72-3.72-4.5-4.07V9H10.5v1.43C8.72 10.78 7 12.28 7 14.5 7 16.72 8.72 18.22 10.5 18.57V19h1.5z"/></svg>
+        <span class="btn-label">5 min</span>
+      </button>
+
+      <!-- ↺ 30 s -->
+      <button class="btn" onclick="skip(-30)">
+        <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/><text x="12" y="14" text-anchor="middle" font-size="5" font-family="-apple-system,sans-serif" font-weight="700" fill="white">30</text></svg>
+        <span class="btn-label">30 s</span>
+      </button>
+
+      <!-- ▶ / ⏸ Play/Pause — identical card to siblings -->
+      <button class="btn" id="pp-btn" onclick="togglePlayPause()">
+        <svg id="pp-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        <svg id="pp-play"  viewBox="0 0 24 24" style="display:none"><path d="M8 5v14l11-7z"/></svg>
+        <span class="btn-label" id="pp-label">Pause</span>
+      </button>
+
+      <!-- LIVE -->
+      <button class="btn btn-live" onclick="goLive()">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M6.76 6.76a8 8 0 0 0 0 10.48l1.42-1.42a6 6 0 0 1 0-7.64L6.76 6.76zm10.48 0-1.42 1.42a6 6 0 0 1 0 7.64l1.42 1.42a8 8 0 0 0 0-10.48z"/></svg>
+        <span class="btn-label">LIVE</span>
+      </button>
+
+      <!-- ↻ 30 s -->
+      <button class="btn" onclick="skip(30)">
+        <svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z"/><text x="12" y="14" text-anchor="middle" font-size="5" font-family="-apple-system,sans-serif" font-weight="700" fill="white">30</text></svg>
+        <span class="btn-label">30 s</span>
+      </button>
+
+      <!-- ↻ 5 min -->
+      <button class="btn" onclick="skip(300)">
+        <svg viewBox="0 0 24 24"><path d="M11.5 5C15.64 5 19.14 7.43 20.72 10.93L23 8.5V15h-6.5l2.55-2.55C17.88 9.72 14.94 8 11.5 8c-3.04 0-5.64 1.72-7.05 4.26L2.18 10.92C3.2 7.42 6.55 5 11.5 5zM12 17v-1.87c1.8-.38 3-1.22 3-2.63 0-1.5-1.5-2.46-3-2.46s-3 .96-3 2.46H7.5c0-2.22 1.72-3.72 4.5-4.07V9h1.5v1.43c1.78.35 3.5 1.85 3.5 4.07C17 16.72 15.28 18.22 13.5 18.57V19H12v-2z"/></svg>
+        <span class="btn-label">5 min</span>
+      </button>
+
+    </div>
   </div>
 </div>
 
 <script>
-  const params   = new URLSearchParams(window.location.search);
-  const streamUrl = decodeURIComponent(params.get('url') || '');
+  const params      = new URLSearchParams(window.location.search);
+  const streamUrl   = decodeURIComponent(params.get('url') || '');
   const targetParam = params.get('target');
   const offsetParam = params.get('offset');
-  const DVR_WINDOW = 2 * 3600; // 2 Stunden
+  const DVR         = 2 * 3600;
 
   const video      = document.getElementById('video');
-  const overlay    = document.getElementById('playOverlay');
+  const overlay    = document.getElementById('play-overlay');
+  const loading    = document.getElementById('loading');
   const fill       = document.getElementById('seekbar-fill');
   const thumb      = document.getElementById('seekbar-thumb');
-  const track      = document.getElementById('seekbar-track');
+  const seekWrap   = document.getElementById('seekbar-wrap');
   const labelStart = document.getElementById('label-start');
-  const labelNow   = document.getElementById('label-now');
-  const status     = document.getElementById('status');
+  const timeCur    = document.getElementById('time-current');
+  const liveBadge  = document.getElementById('live-badge');
+  const ppPause    = document.getElementById('pp-pause');
+  const ppPlay     = document.getElementById('pp-play');
+  const ppLabel    = document.getElementById('pp-label');
+  const pipBtn     = document.getElementById('pip-btn');
+  const fsEnter    = document.getElementById('fs-enter');
+  const fsExit     = document.getElementById('fs-exit');
+
+  let seekableEnd = null;
+  let isDragging  = false;
 
   function calcOffset() {
     if (offsetParam) return parseInt(offsetParam);
     if (targetParam) {
       const [h, m] = targetParam.split(':').map(Number);
-      const now = new Date(), target = new Date();
-      target.setHours(h, m, 0, 0);
-      return Math.max(0, Math.floor((now - target) / 1000));
+      const now = new Date(), t = new Date();
+      t.setHours(h, m, 0, 0);
+      return Math.max(0, Math.floor((now - t) / 1000));
     }
     return 0;
   }
-
   const initialOffset = calcOffset();
-  let seekableEnd = null;
-  let started = false;
 
-  // hls.js Setup
+  // HLS
   const hls = new Hls({ liveSyncDurationCount: 5 });
   hls.loadSource(streamUrl);
   hls.attachMedia(video);
+  hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) loading.classList.remove('hidden'); });
 
-  hls.on(Hls.Events.ERROR, (e, data) => {
-    status.textContent = `Fehler: ${data.details}`;
+  video.addEventListener('waiting', () => loading.classList.remove('hidden'));
+  video.addEventListener('playing', () => loading.classList.add('hidden'));
+  video.addEventListener('canplay', () => loading.classList.add('hidden'));
+
+  video.addEventListener('progress', () => {
+    if (!video.seekable.length) return;
+    seekableEnd = video.seekable.end(0);
+    const s = Math.max(video.seekable.start(0), seekableEnd - DVR);
+    labelStart.textContent = new Date(Date.now() - (seekableEnd - s) * 1000)
+      .toLocaleTimeString('de', { hour: '2-digit', minute: '2-digit' });
   });
 
-  // Seekable range aktualisiert sich laufend
-  video.addEventListener('progress', updateSeekable);
-  video.addEventListener('timeupdate', updateUI);
-
-  function updateSeekable() {
-    if (video.seekable.length > 0) {
-      seekableEnd = video.seekable.end(0);
-      const start = video.seekable.start(0);
-      const dvrLen = Math.min(seekableEnd - start, DVR_WINDOW);
-      const startTime = new Date((Date.now() - dvrLen * 1000));
-      labelStart.textContent = startTime.toLocaleTimeString('de', {hour:'2-digit', minute:'2-digit'});
-    }
-  }
-
-  function updateUI() {
-    if (!seekableEnd || !video.seekable.length) return;
-    const start = Math.max(video.seekable.start(0), seekableEnd - DVR_WINDOW);
-    const end   = seekableEnd;
-    const pos   = video.currentTime;
-    const pct   = Math.max(0, Math.min(1, (pos - start) / (end - start)));
-
-    fill.style.width  = (pct * 100) + '%';
-    thumb.style.left  = (pct * 100) + '%';
-
-    const behind = Math.round(end - pos);
-    status.textContent = behind < 5 ? '🔴 LIVE' : `-${fmt(behind)}`;
-  }
-
-  function fmt(s) {
-    const m = Math.floor(s / 60), sec = s % 60;
-    return `${m}:${String(sec).padStart(2,'0')}`;
-  }
+  video.addEventListener('timeupdate', () => {
+    if (!seekableEnd || !video.seekable.length || isDragging) return;
+    const s   = Math.max(video.seekable.start(0), seekableEnd - DVR);
+    const pct = Math.max(0, Math.min(1, (video.currentTime - s) / (seekableEnd - s)));
+    fill.style.width = (pct * 100) + '%';
+    thumb.style.left = (pct * 100) + '%';
+    const behind = Math.round(seekableEnd - video.currentTime);
+    liveBadge.classList.toggle('is-live', behind < 8);
+    timeCur.textContent = new Date(Date.now() - behind * 1000)
+      .toLocaleTimeString('de', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  });
 
   function skip(sec) {
-    video.currentTime = Math.max(
-      video.seekable.length ? video.seekable.start(0) : 0,
-      video.currentTime + sec
-    );
+    if (!video.seekable.length || !seekableEnd) return;
+    video.currentTime = Math.max(video.seekable.start(0), Math.min(seekableEnd - 2, video.currentTime + sec));
   }
 
   function goLive() {
     if (seekableEnd) video.currentTime = seekableEnd - 3;
+    video.play().catch(() => {});
   }
 
-  // Seekbar antippen
-  track.addEventListener('click', e => {
-    if (!video.seekable.length) return;
-    const rect  = track.getBoundingClientRect();
-    const pct   = (e.clientX - rect.left) / rect.width;
-    const start = Math.max(video.seekable.start(0), seekableEnd - DVR_WINDOW);
-    video.currentTime = start + pct * (seekableEnd - start);
-  });
+  // Play/Pause
+  function updatePP() {
+    const p = video.paused;
+    ppPause.style.display = p ? 'none' : 'block';
+    ppPlay.style.display  = p ? 'block' : 'none';
+    ppLabel.textContent   = p ? 'Play' : 'Pause';
+  }
+  function togglePlayPause() {
+    video.paused ? video.play().catch(() => {}) : video.pause();
+  }
+  video.addEventListener('play',  updatePP);
+  video.addEventListener('pause', updatePP);
 
-  // Play-Overlay: User-Geste → Autoplay erlaubt
-  overlay.addEventListener('click', () => {
-    overlay.style.display = 'none';
-    started = true;
+  // Fullscreen
+  function toggleFullscreen() {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen();
+    } else if (video.webkitEnterFullscreen) {
+      video.webkitEnterFullscreen();
+    }
+  }
+  function onFsChange() {
+    const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    fsEnter.style.display = isFs ? 'none'  : '';
+    fsExit.style.display  = isFs ? ''      : 'none';
+  }
+  document.addEventListener('fullscreenchange',       onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
 
-    // Warte auf seekable, dann springe
-    function trySeek() {
-      if (video.seekable.length > 0 && seekableEnd) {
-        const target = seekableEnd - initialOffset;
-        if (target > video.seekable.start(0)) {
-          video.currentTime = target;
-        }
-        video.play();
-      } else {
-        setTimeout(trySeek, 300);
+  // PiP
+  if (document.pictureInPictureEnabled || video.webkitSupportsPresentationMode) {
+    pipBtn.classList.remove('hidden');
+  }
+  async function togglePip() {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (video.webkitPresentationMode === 'picture-in-picture') {
+        video.webkitSetPresentationMode('inline');
+      } else if (video.requestPictureInPicture) {
+        await video.requestPictureInPicture();
+      } else if (video.webkitSetPresentationMode) {
+        video.webkitSetPresentationMode('picture-in-picture');
       }
+    } catch(e) { console.warn('PiP:', e); }
+  }
+
+  // Seekbar
+  function pctFrom(e) {
+    const r = seekWrap.getBoundingClientRect();
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    return Math.max(0, Math.min(1, (x - r.left) / r.width));
+  }
+  function seekTo(pct) {
+    if (!video.seekable.length || !seekableEnd) return;
+    const s = Math.max(video.seekable.start(0), seekableEnd - DVR);
+    fill.style.width = (pct * 100) + '%';
+    thumb.style.left = (pct * 100) + '%';
+    video.currentTime = s + pct * (seekableEnd - s);
+  }
+  seekWrap.addEventListener('touchstart', e => { e.preventDefault(); isDragging = true; seekWrap.classList.add('dragging'); seekTo(pctFrom(e)); }, { passive: false });
+  seekWrap.addEventListener('touchmove',  e => { e.preventDefault(); if (isDragging) seekTo(pctFrom(e)); }, { passive: false });
+  seekWrap.addEventListener('touchend',   e => { e.preventDefault(); isDragging = false; seekWrap.classList.remove('dragging'); }, { passive: false });
+  seekWrap.addEventListener('mousedown',  e => { isDragging = true; seekWrap.classList.add('dragging'); seekTo(pctFrom(e)); });
+  window.addEventListener('mousemove',   e => { if (isDragging) seekTo(pctFrom(e)); });
+  window.addEventListener('mouseup',     () => { isDragging = false; seekWrap.classList.remove('dragging'); });
+
+  // Start
+  overlay.addEventListener('click', () => {
+    overlay.classList.add('hidden');
+    loading.classList.remove('hidden');
+    function trySeek() {
+      if (video.seekable.length && seekableEnd) {
+        const t = seekableEnd - initialOffset;
+        if (t > video.seekable.start(0)) video.currentTime = t;
+        video.play().catch(() => {});
+      } else { setTimeout(trySeek, 300); }
     }
     video.play().catch(() => {});
     trySeek();
