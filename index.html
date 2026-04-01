@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stream Player</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; flex-direction: column;
+           align-items: center; justify-content: center;
+           min-height: 100vh; font-family: sans-serif; color: white; }
+    video { width: 100%; max-width: 1280px; }
+    #info { margin-top: 12px; font-size: 14px; opacity: 0.6; }
+  </style>
+</head>
+<body>
+  <video id="video" controls autoplay playsinline></video>
+  <div id="info">Lade Stream...</div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const streamUrl = params.get('url');
+    const targetParam = params.get('target'); // z.B. "19:00"
+    const offsetParam = params.get('offset'); // z.B. "900" (Sekunden)
+    const info = document.getElementById('info');
+
+    // Versatz berechnen
+    function calcOffset() {
+      if (offsetParam) return parseInt(offsetParam);
+      if (targetParam) {
+        const [h, m] = targetParam.split(':').map(Number);
+        const now = new Date();
+        const target = new Date();
+        target.setHours(h, m, 0, 0);
+        return Math.floor((now - target) / 1000);
+      }
+      return 0;
+    }
+
+    if (!streamUrl) {
+      info.textContent = 'Kein Stream angegeben. ?url=... fehlt.';
+    } else {
+      const video = document.getElementById('video');
+      const offset = calcOffset();
+
+      if (Hls.isSupported()) {
+        const hls = new Hls({ liveSyncDurationCount: 10 });
+        hls.loadSource(decodeURIComponent(streamUrl));
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          // Springe ans Ende minus Versatz
+          video.currentTime = video.duration - offset;
+          video.play();
+          const min = Math.floor(offset / 60);
+          const sec = offset % 60;
+          info.textContent = `Springe ${min}m ${sec}s zurück (Ziel: ${targetParam || 'manuell'})`;
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari / iOS native HLS
+        video.src = decodeURIComponent(streamUrl);
+        video.addEventListener('loadedmetadata', () => {
+          video.currentTime = video.duration - offset;
+          video.play();
+        });
+      } else {
+        info.textContent = 'HLS wird in diesem Browser nicht unterstützt.';
+      }
+    }
+  </script>
+</body>
+</html>
