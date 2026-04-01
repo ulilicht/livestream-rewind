@@ -7,108 +7,200 @@
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; display: flex; flex-direction: column;
-           align-items: center; min-height: 100vh;
-           font-family: monospace; color: white; padding: 12px; }
-    video { width: 100%; max-width: 1280px; }
-    #log { margin-top: 16px; width: 100%; max-width: 1280px;
-           font-size: 13px; line-height: 1.8; }
-    .ok   { color: #4caf50; }
-    .warn { color: #ff9800; }
-    .err  { color: #f44336; }
-    .info { color: #90caf9; }
+    body { background: #111; display: flex; flex-direction: column;
+           align-items: center; justify-content: center;
+           min-height: 100vh; font-family: sans-serif; color: white; }
+
+    #wrapper { position: relative; width: 100%; max-width: 1280px; }
+    video { width: 100%; display: block; background: #000; }
+
+    /* Play-Button Overlay */
+    #playOverlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5); cursor: pointer; font-size: 72px;
+    }
+
+    /* Controls */
+    #controls {
+      width: 100%; max-width: 1280px;
+      padding: 12px 16px; background: #1e1e1e;
+    }
+
+    /* Seekbar */
+    #seekbar-track {
+      position: relative; height: 8px; background: #444;
+      border-radius: 4px; cursor: pointer; margin-bottom: 8px;
+    }
+    #seekbar-fill {
+      height: 100%; background: #e00; border-radius: 4px;
+      pointer-events: none;
+    }
+    #seekbar-thumb {
+      position: absolute; top: 50%; width: 18px; height: 18px;
+      background: white; border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    /* Labels */
+    #time-labels {
+      display: flex; justify-content: space-between;
+      font-size: 12px; opacity: 0.6; margin-bottom: 8px;
+    }
+
+    /* Buttons */
+    #btn-row {
+      display: flex; gap: 8px; align-items: center;
+    }
+    button {
+      background: #333; border: none; color: white;
+      padding: 6px 14px; border-radius: 6px;
+      font-size: 14px; cursor: pointer;
+    }
+    button:active { background: #555; }
+    #status { font-size: 12px; opacity: 0.5; margin-left: auto; }
   </style>
 </head>
 <body>
-  <video id="video" controls playsinline></video>
-  <div id="log"></div>
 
-  <script>
-    const log = document.getElementById('log');
-    function out(msg, type = 'info') {
-      const d = document.createElement('div');
-      d.className = type;
-      d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      log.appendChild(d);
+<div id="wrapper">
+  <video id="video" playsinline></video>
+  <div id="playOverlay">▶</div>
+</div>
+
+<div id="controls">
+  <div id="seekbar-track">
+    <div id="seekbar-fill"></div>
+    <div id="seekbar-thumb"></div>
+  </div>
+  <div id="time-labels">
+    <span id="label-start">–2:00h</span>
+    <span id="label-now">LIVE</span>
+  </div>
+  <div id="btn-row">
+    <button onclick="skip(-30)">⏪ 30s</button>
+    <button onclick="skip(-10)">⏪ 10s</button>
+    <button onclick="goLive()">🔴 LIVE</button>
+    <button onclick="skip(10)">10s ⏩</button>
+    <button onclick="skip(30)">30s ⏩</button>
+    <span id="status">Lade...</span>
+  </div>
+</div>
+
+<script>
+  const params   = new URLSearchParams(window.location.search);
+  const streamUrl = decodeURIComponent(params.get('url') || '');
+  const targetParam = params.get('target');
+  const offsetParam = params.get('offset');
+  const DVR_WINDOW = 2 * 3600; // 2 Stunden
+
+  const video      = document.getElementById('video');
+  const overlay    = document.getElementById('playOverlay');
+  const fill       = document.getElementById('seekbar-fill');
+  const thumb      = document.getElementById('seekbar-thumb');
+  const track      = document.getElementById('seekbar-track');
+  const labelStart = document.getElementById('label-start');
+  const labelNow   = document.getElementById('label-now');
+  const status     = document.getElementById('status');
+
+  function calcOffset() {
+    if (offsetParam) return parseInt(offsetParam);
+    if (targetParam) {
+      const [h, m] = targetParam.split(':').map(Number);
+      const now = new Date(), target = new Date();
+      target.setHours(h, m, 0, 0);
+      return Math.max(0, Math.floor((now - target) / 1000));
     }
+    return 0;
+  }
 
-    const params = new URLSearchParams(window.location.search);
-    const streamUrl = params.get('url');
-    const targetParam = params.get('target');
-    const offsetParam = params.get('offset');
+  const initialOffset = calcOffset();
+  let seekableEnd = null;
+  let started = false;
 
-    out(`URL-Parameter url: ${streamUrl ? '✓' : '✗ FEHLT'}`, streamUrl ? 'ok' : 'err');
-    out(`Target: ${targetParam || '–'}   Offset: ${offsetParam || '–'}`);
+  // hls.js Setup
+  const hls = new Hls({ liveSyncDurationCount: 5 });
+  hls.loadSource(streamUrl);
+  hls.attachMedia(video);
 
-    function calcOffset() {
-      if (offsetParam) return parseInt(offsetParam);
-      if (targetParam) {
-        const [h, m] = targetParam.split(':').map(Number);
-        const now = new Date();
-        const target = new Date();
-        target.setHours(h, m, 0, 0);
-        const diff = Math.floor((now - target) / 1000);
-        out(`Berechneter Versatz: ${diff}s (${Math.floor(diff/60)}m ${diff%60}s)`);
-        return diff;
-      }
-      return 0;
+  hls.on(Hls.Events.ERROR, (e, data) => {
+    status.textContent = `Fehler: ${data.details}`;
+  });
+
+  // Seekable range aktualisiert sich laufend
+  video.addEventListener('progress', updateSeekable);
+  video.addEventListener('timeupdate', updateUI);
+
+  function updateSeekable() {
+    if (video.seekable.length > 0) {
+      seekableEnd = video.seekable.end(0);
+      const start = video.seekable.start(0);
+      const dvrLen = Math.min(seekableEnd - start, DVR_WINDOW);
+      const startTime = new Date((Date.now() - dvrLen * 1000));
+      labelStart.textContent = startTime.toLocaleTimeString('de', {hour:'2-digit', minute:'2-digit'});
     }
+  }
 
-    if (!streamUrl) {
-      out('Kein Stream-URL angegeben!', 'err');
-    } else {
-      const video = document.getElementById('video');
-      const offset = calcOffset();
+  function updateUI() {
+    if (!seekableEnd || !video.seekable.length) return;
+    const start = Math.max(video.seekable.start(0), seekableEnd - DVR_WINDOW);
+    const end   = seekableEnd;
+    const pos   = video.currentTime;
+    const pct   = Math.max(0, Math.min(1, (pos - start) / (end - start)));
 
-      out(`hls.js unterstützt: ${Hls.isSupported()}`);
-      out(`Native HLS (Safari): ${!!video.canPlayType('application/vnd.apple.mpegurl')}`);
+    fill.style.width  = (pct * 100) + '%';
+    thumb.style.left  = (pct * 100) + '%';
 
-      if (Hls.isSupported()) {
-        out('Nutze hls.js...');
-        const hls = new Hls({ liveSyncDurationCount: 10, debug: false });
+    const behind = Math.round(end - pos);
+    status.textContent = behind < 5 ? '🔴 LIVE' : `-${fmt(behind)}`;
+  }
 
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          out(`HLS Fehler: ${data.type} / ${data.details} / fatal: ${data.fatal}`, 'err');
-          if (data.response) out(`HTTP Status: ${data.response.code}`, 'err');
-        });
+  function fmt(s) {
+    const m = Math.floor(s / 60), sec = s % 60;
+    return `${m}:${String(sec).padStart(2,'0')}`;
+  }
 
-        hls.on(Hls.Events.MANIFEST_LOADING, () => out('Lade Manifest...'));
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          out('Manifest geladen ✓', 'ok');
-          const seekEnd = video.seekable.length ? video.seekable.end(0) : null;
-          out(`seekable.end(0): ${seekEnd}`);
-          out(`duration: ${video.duration}`);
+  function skip(sec) {
+    video.currentTime = Math.max(
+      video.seekable.length ? video.seekable.start(0) : 0,
+      video.currentTime + sec
+    );
+  }
 
-          if (seekEnd !== null && offset > 0) {
-            const target = seekEnd - offset;
-            out(`Springe zu: ${target.toFixed(1)}s`);
-            video.currentTime = target;
-          }
-          video.play().then(() => out('Playback gestartet ✓', 'ok'))
-                      .catch(e => out(`Play-Fehler: ${e.message}`, 'err'));
-        });
+  function goLive() {
+    if (seekableEnd) video.currentTime = seekableEnd - 3;
+  }
 
-        hls.loadSource(decodeURIComponent(streamUrl));
-        hls.attachMedia(video);
+  // Seekbar antippen
+  track.addEventListener('click', e => {
+    if (!video.seekable.length) return;
+    const rect  = track.getBoundingClientRect();
+    const pct   = (e.clientX - rect.left) / rect.width;
+    const start = Math.max(video.seekable.start(0), seekableEnd - DVR_WINDOW);
+    video.currentTime = start + pct * (seekableEnd - start);
+  });
 
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        out('Nutze nativen Safari HLS...');
-        video.src = decodeURIComponent(streamUrl);
-        video.addEventListener('loadedmetadata', () => {
-          out('Metadata geladen ✓', 'ok');
-          out(`duration: ${video.duration}   seekable.end: ${video.seekable.end(0)}`);
-          if (offset > 0) {
-            video.currentTime = video.seekable.end(0) - offset;
-          }
-          video.play().catch(e => out(`Play-Fehler: ${e.message}`, 'err'));
-        });
-        video.addEventListener('error', e => {
-          out(`Video Fehler: ${video.error?.message || e}`, 'err');
-        });
+  // Play-Overlay: User-Geste → Autoplay erlaubt
+  overlay.addEventListener('click', () => {
+    overlay.style.display = 'none';
+    started = true;
+
+    // Warte auf seekable, dann springe
+    function trySeek() {
+      if (video.seekable.length > 0 && seekableEnd) {
+        const target = seekableEnd - initialOffset;
+        if (target > video.seekable.start(0)) {
+          video.currentTime = target;
+        }
+        video.play();
       } else {
-        out('HLS wird nicht unterstützt!', 'err');
+        setTimeout(trySeek, 300);
       }
     }
-  </script>
+    video.play().catch(() => {});
+    trySeek();
+  });
+</script>
 </body>
 </html>
