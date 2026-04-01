@@ -85,10 +85,38 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Cinema / Fullscreen mode ── */
+    #controls {
+      transition: transform 0.3s ease, opacity 0.3s ease;
+    }
+    #app.cinema {
+      position: fixed; inset: 0; z-index: 999;
+    }
+    #app.cinema #controls {
+      transform: translateY(100%);
+      opacity: 0;
+      pointer-events: none;
+    }
+    #app.cinema #video-corner {
+      opacity: 0;
+    }
+    #app.cinema.peek #controls {
+      transform: translateY(0);
+      opacity: 1;
+      pointer-events: all;
+    }
+    #app.cinema.peek #video-corner {
+      opacity: 1;
+    }
+
+    /* Hide burned-in / WebVTT subtitles */
+    video::cue { opacity: 0 !important; }
+
     /* ── Video corner: Fullscreen + PiP ── */
     #video-corner {
       position: absolute; bottom: 14px; right: 14px;
       display: flex; gap: 8px; align-items: center;
+      transition: opacity 0.3s ease;
     }
     .corner-btn {
       width: 38px; height: 38px;
@@ -335,6 +363,22 @@
   hls.attachMedia(video);
   hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) loading.classList.remove('hidden'); });
 
+  // Disable subtitles
+  hls.subtitleDisplay = false;
+  hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    hls.subtitleTrack = -1;
+  });
+  // Also hide any WebVTT text tracks
+  video.addEventListener('loadedmetadata', () => {
+    for (const track of video.textTracks) {
+      track.mode = 'hidden';
+    }
+  });
+  // Catch dynamically added tracks
+  video.textTracks.addEventListener('addtrack', e => {
+    e.track.mode = 'hidden';
+  });
+
   video.addEventListener('waiting', () => loading.classList.remove('hidden'));
   video.addEventListener('playing', () => loading.classList.add('hidden'));
   video.addEventListener('canplay', () => loading.classList.add('hidden'));
@@ -382,23 +426,31 @@
   video.addEventListener('play',  updatePP);
   video.addEventListener('pause', updatePP);
 
-  // Fullscreen
+  // ── Cinema / Fullscreen mode ──
+  const app = document.getElementById('app');
+  let isCinema = false;
+  let peekTimer = null;
+
+  function showPeek() {
+    app.classList.add('peek');
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => app.classList.remove('peek'), 3500);
+  }
+
   function toggleFullscreen() {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    } else if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen();
-    } else if (video.webkitEnterFullscreen) {
-      video.webkitEnterFullscreen();
-    }
+    isCinema = !isCinema;
+    app.classList.toggle('cinema', isCinema);
+    fsEnter.style.display = isCinema ? 'none' : '';
+    fsExit.style.display  = isCinema ? ''     : 'none';
+    if (isCinema) showPeek();
   }
-  function onFsChange() {
-    const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    fsEnter.style.display = isFs ? 'none'  : '';
-    fsExit.style.display  = isFs ? ''      : 'none';
-  }
-  document.addEventListener('fullscreenchange',       onFsChange);
-  document.addEventListener('webkitfullscreenchange', onFsChange);
+
+  // Tap on video in cinema mode: toggle controls peek
+  document.getElementById('video-wrap').addEventListener('click', e => {
+    // Don't fire when tapping corner buttons
+    if (e.target.closest('.corner-btn')) return;
+    if (isCinema) showPeek();
+  });
 
   // PiP
   if (document.pictureInPictureEnabled || video.webkitSupportsPresentationMode) {
