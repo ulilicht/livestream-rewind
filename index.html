@@ -45,7 +45,7 @@
 
     video {
       width: 100%; height: 100%;
-      object-fit: contain; display: block;
+      object-fit: cover; display: block;
     }
 
     /* ── Start overlay ── */
@@ -131,6 +131,33 @@
     .corner-btn:active { transform: scale(0.86); background: rgba(0,0,0,0.7); }
     .corner-btn svg { width: 18px; height: 18px; fill: white; }
     .corner-btn.hidden { display: none; }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 90px;
+      transform: translateX(-50%);
+      max-width: min(90%, 480px);
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(44, 44, 46, 0.94);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.3;
+      text-align: center;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+      z-index: 1000;
+    }
+    #toast.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
 
     /* ── Controls panel ── */
     #controls {
@@ -318,6 +345,7 @@
     </div>
   </div>
 </div>
+<div id="toast" aria-live="polite"></div>
 
 <script>
   const params      = new URLSearchParams(window.location.search);
@@ -341,9 +369,22 @@
   const pipBtn     = document.getElementById('pip-btn');
   const fsEnter    = document.getElementById('fs-enter');
   const fsExit     = document.getElementById('fs-exit');
+  const toast      = document.getElementById('toast');
 
   let seekableEnd = null;
   let isDragging  = false;
+  let toastTimer  = null;
+
+  function showToast(message, durationMs = 3000) {
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add('visible');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast.classList.remove('visible');
+      toastTimer = null;
+    }, durationMs);
+  }
 
   function calcOffset() {
     if (offsetParam) return parseInt(offsetParam);
@@ -351,11 +392,21 @@
       const [h, m] = targetParam.split(':').map(Number);
       const now = new Date(), t = new Date();
       t.setHours(h, m, 0, 0);
+      
+      // Wenn die Zeit in der "Zukunft" für heute liegt, meint der Nutzer gestern
+      if (t > now) {
+        t.setDate(t.getDate() - 1);
+      }
+      
       return Math.max(0, Math.floor((now - t) / 1000));
     }
     return 0;
   }
   const initialOffset = calcOffset();
+
+  if (Number.isFinite(initialOffset) && initialOffset > 2 * 3600 && (targetParam || offsetParam)) {
+    showToast('Die Rückschau ist auf die letzten 2 Stunden begrenzt.');
+  }
 
   // HLS
   const hls = new Hls({ liveSyncDurationCount: 5 });
@@ -426,32 +477,35 @@
   video.addEventListener('play',  updatePP);
   video.addEventListener('pause', updatePP);
 
-  // ── Cinema / Fullscreen mode ──
-  const app = document.getElementById('app');
-  let isCinema = false;
-  let peekTimer = null;
-
-  function showPeek() {
-    app.classList.add('peek');
-    clearTimeout(peekTimer);
-    peekTimer = setTimeout(() => app.classList.remove('peek'), 3500);
-  }
-
+  // ── Native Fullscreen mode (iPad/iOS preference) ──
   function toggleFullscreen() {
-    isCinema = !isCinema;
-    app.classList.toggle('cinema', isCinema);
-    fsEnter.style.display = isCinema ? 'none' : '';
-    fsExit.style.display  = isCinema ? ''     : 'none';
-    if (isCinema) showPeek();
+    // Enable controls so the native system player provides Play/Pause/Seek if needed
+    // (iPad Safari often natively injects its own, but it's safer for cross-compatibility)
+    video.controls = true;
+
+    if (video.webkitEnterFullscreen) {
+      // iPad / iOS Safari native fullscreen
+      video.webkitEnterFullscreen();
+    } else if (video.requestFullscreen) {
+      video.requestFullscreen();
+    } else if (video.webkitRequestFullscreen) {
+      video.webkitRequestFullscreen();
+    } else if (video.msRequestFullscreen) {
+      video.msRequestFullscreen();
+    }
   }
 
-  // Tap on video in cinema mode: toggle controls peek
-  document.getElementById('video-wrap').addEventListener('click', e => {
-    // Don't fire when tapping corner buttons
-    if (e.target.closest('.corner-btn')) return;
-    if (isCinema) showPeek();
+  // Disable controls when returning from fullscreen
+  video.addEventListener('webkitendfullscreen', () => {
+    video.controls = false;
   });
-
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) video.controls = false;
+  });
+  document.addEventListener('webkitfullscreenchange', () => {
+    if (!document.webkitFullscreenElement) video.controls = false;
+  });
+  
   // PiP
   if (document.pictureInPictureEnabled || video.webkitSupportsPresentationMode) {
     pipBtn.classList.remove('hidden');
