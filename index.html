@@ -3,7 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Stream Player</title>
+  <title>Rewind</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Rewind">
+  <link rel="manifest" href="manifest.json">
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
     :root {
@@ -372,6 +378,7 @@
   const toast      = document.getElementById('toast');
 
   let seekableEnd = null;
+  let liveEdgeAbsoluteTime = Date.now();
   let isDragging  = false;
   let toastTimer  = null;
 
@@ -436,9 +443,13 @@
 
   video.addEventListener('progress', () => {
     if (!video.seekable.length) return;
-    seekableEnd = video.seekable.end(0);
+    const newEnd = video.seekable.end(0);
+    if (!seekableEnd || newEnd > seekableEnd) {
+      seekableEnd = newEnd;
+      liveEdgeAbsoluteTime = Date.now();
+    }
     const s = Math.max(video.seekable.start(0), seekableEnd - DVR);
-    labelStart.textContent = new Date(Date.now() - (seekableEnd - s) * 1000)
+    labelStart.textContent = new Date(liveEdgeAbsoluteTime - (seekableEnd - s) * 1000)
       .toLocaleTimeString('de', { hour: '2-digit', minute: '2-digit' });
   });
 
@@ -448,9 +459,10 @@
     const pct = Math.max(0, Math.min(1, (video.currentTime - s) / (seekableEnd - s)));
     fill.style.width = (pct * 100) + '%';
     thumb.style.left = (pct * 100) + '%';
-    const behind = Math.round(seekableEnd - video.currentTime);
-    liveBadge.classList.toggle('is-live', behind < 8);
-    timeCur.textContent = new Date(Date.now() - behind * 1000)
+    
+    liveBadge.classList.toggle('is-live', (seekableEnd - video.currentTime) < 8);
+    const targetMs = liveEdgeAbsoluteTime - (seekableEnd - video.currentTime) * 1000;
+    timeCur.textContent = new Date(targetMs)
       .toLocaleTimeString('de', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   });
 
@@ -535,7 +547,15 @@
     const s = Math.max(video.seekable.start(0), seekableEnd - DVR);
     fill.style.width = (pct * 100) + '%';
     thumb.style.left = (pct * 100) + '%';
-    video.currentTime = s + pct * (seekableEnd - s);
+    
+    // UI Zeit während des Scrollens updaten
+    const targetTime = s + pct * (seekableEnd - s);
+    liveBadge.classList.toggle('is-live', (seekableEnd - targetTime) < 8);
+    const targetMs = liveEdgeAbsoluteTime - (seekableEnd - targetTime) * 1000;
+    timeCur.textContent = new Date(targetMs)
+      .toLocaleTimeString('de', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    video.currentTime = targetTime;
   }
   seekWrap.addEventListener('touchstart', e => { e.preventDefault(); isDragging = true; seekWrap.classList.add('dragging'); seekTo(pctFrom(e)); }, { passive: false });
   seekWrap.addEventListener('touchmove',  e => { e.preventDefault(); if (isDragging) seekTo(pctFrom(e)); }, { passive: false });
